@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <title>ลูกค้า</title>
+  <style>
+    body {
+      font-family: sans-serif;
+      max-width: 1200px;
+      margin: auto;
+      padding: 20px;
+    }
+
+    img {
+      width: 80px;
+      height: 80px;
+      object-fit: cover;
+      border-radius: 8px;
+    }
+
+    .menu-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin: 10px 0;
+    }
+
+    .main-container {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 20px;
+    }
+
+    .left-content {
+      flex: 2;
+    }
+
+    .order-summary {
+      flex: 1;
+      background: #f0f0f0;
+      padding: 15px;
+      border-radius: 8px;
+    }
+
+    .order-list {
+      margin-top: 20px;
+    }
+
+    .status {
+      margin-top: 30px;
+      font-weight: bold;
+      color: green;
+    }
+  </style>
+</head>
+<body>
+  <h2>สั่งอาหาร</h2>
+
+  <label>เลขโต๊ะ: <input id="table" placeholder="1, 2, 3..." type="number" min="1" /></label>
+
+  <div class="main-container">
+    <div class="left-content">
+      <div id="menu"></div>
+
+      <div class="order-list">
+        <h3>รายการที่สั่ง</h3>
+        <ul id="order-items"></ul>
+        <button onclick="submitOrder()">ส่งออร์เดอร์</button>
+        <p id="status"></p>
+      </div>
+    </div>
+
+    <div class="order-summary">
+      <h3>สรุปออร์เดอร์</h3>
+      <ul id="order-summary-list"></ul>
+    </div>
+  </div>
+
+  <script src="https://cdn.socket.io/4.3.2/socket.io.min.js"></script>
+  <script>
+    const socket = io('http://localhost:3000');
+    let orderId = null; // ID ออร์เดอร์จาก Server
+    let orderList = {};
+    let orderQueue = {}; // เก็บข้อมูลที่อ้างอิงตามเลขคิว
+
+    const menu = [
+      { id: 1, name: "ข้าวผัด", image: "https://www.maggi.co.th/sites/default/files/styles/home_stage_1500_700/public/srh_recipes/9f922d8fe6344f4a8b641ebd716be4cd.jpg?h=4f5b30f1&itok=RfCaqciT" },
+      { id: 2, name: "ผัดไทย", image: "https://media-cdn.tripadvisor.com/media/photo-s/0d/43/62/66/caption.jpg" },
+      { id: 3, name: "ต้มยำ", image: "https://kwanjailaome.wordpress.com/wp-content/uploads/2014/12/sa-mun-pai-4_0.jpg?w=412&h=290" }
+    ];
+
+    function renderMenu() {
+      const container = document.getElementById('menu');
+      container.innerHTML = '';
+      menu.forEach(item => {
+        const div = document.createElement('div');
+        div.className = 'menu-item';
+        div.innerHTML = `
+          <img src="${item.image}" alt="${item.name}">
+          <b>${item.name}</b>
+          <button onclick="removeItem(${item.id})">-</button>
+          <span id="qty-${item.id}">0</span>
+          <button onclick="addItem(${item.id})">+</button>
+        `;
+        container.appendChild(div);
+      });
+    }
+
+    function addItem(id) {
+      const item = menu.find(m => m.id === id);
+      if (!orderList[id]) orderList[id] = { ...item, qty: 0 };
+      orderList[id].qty += 1;
+      document.getElementById(`qty-${id}`).innerText = orderList[id].qty;
+      renderOrderList();
+    }
+
+    function removeItem(id) {
+      if (orderList[id]) {
+        orderList[id].qty -= 1;
+        if (orderList[id].qty <= 0) delete orderList[id];
+        document.getElementById(`qty-${id}`).innerText = orderList[id] ? orderList[id].qty : 0;
+        renderOrderList();
+      }
+    }
+
+    function renderOrderList() {
+      const list = document.getElementById('order-items');
+      list.innerHTML = '';
+      Object.values(orderList).forEach(item => {
+        const li = document.createElement('li');
+        li.textContent = `${item.name} × ${item.qty}`;
+        list.appendChild(li);
+      });
+    }
+
+    function submitOrder() {
+      const table = document.getElementById('table').value;
+      if (!table || Object.keys(orderList).length === 0) {
+        alert('กรุณาใส่เลขโต๊ะ และเลือกอาหารอย่างน้อย 1 อย่าง');
+        return;
+      }
+
+      const orderData = {
+        table: table,
+        items: Object.values(orderList),
+        status: 'waiting'
+      };
+
+      fetch('http://localhost:3000/order', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(orderData)
+      })
+      .then(res => res.json())
+      .then(data => {
+        console.log(data); // พิมพ์ข้อมูลที่ได้รับจากเซิร์ฟเวอร์
+        orderId = data.id;
+        renderOrderSummary(data.queueNumber, data.remainingQueue); // แสดงคิวที่ Server กำหนด
+      });
+    }
+
+    function renderOrderSummary(queueNumber, remainingQueue) {
+      const summaryList = document.getElementById('order-summary-list');
+      summaryList.innerHTML = '';
+
+      // เก็บข้อมูลใน orderQueue ตามเลขคิว
+      const order = {
+        id: orderId,
+        items: Object.values(orderList),
+        queueNumber: queueNumber,
+        remainingQueue: remainingQueue,
+        status: 'waiting'
+      };
+      orderQueue[queueNumber] = order;
+
+      // แสดงรายการสรุปของแต่ละเลขคิว
+      for (const queue in orderQueue) {
+        const order = orderQueue[queue];
+        const roundElement = document.createElement('li');
+        roundElement.setAttribute('data-id', order.id);
+        roundElement.innerHTML = `
+          <b>คิวที่ ${order.queueNumber}</b><br>
+          สั่ง: ${order.items.map(item => `${item.name} × ${item.qty}`).join(', ')}<br>
+          คิวที่เหลือ: <span class="remaining-queue-text">${order.remainingQueue}</span><br>
+          สถานะ: <span class="status-text">${getStatusText(order.status)}</span>
+        `;
+        summaryList.appendChild(roundElement);
+      }
+    }
+
+    function getStatusText(status) {
+      const statusMap = {
+        waiting: 'รอพ่อครัวรับออร์เดอร์',
+        accepted: 'กำลังทำอาหาร',
+        done: 'พนักงานกำลังนำส่ง',
+        delivered: 'ได้รับอาหารแล้ว'
+      };
+      return statusMap[status] || 'ไม่ทราบสถานะ';
+    }
+
+    socket.on('status-updated', (data) => {
+      const { order, remainingQueue } = data;
+      
+      // ตรวจสอบว่าเลขคิวตรงกับที่เก็บไว้ใน orderQueue หรือไม่
+      if (orderQueue[order.queueNumber]) {
+        // อัปเดตสถานะของเลขคิวที่ตรงกัน
+        const statusText = getStatusText(order.status);
+        document.getElementById('status').innerText = statusText;
+
+        // อัปเดตสถานะในรายการสรุปออร์เดอร์ที่ตรงกับเลขคิว
+        const summaryItems = document.querySelectorAll('#order-summary-list li');
+        summaryItems.forEach(item => {
+          if (item.getAttribute('data-id') == order.id) {
+            const statusSpan = item.querySelector('.status-text');
+            if (statusSpan) {
+              statusSpan.textContent = getStatusText(order.status); // อัปเดตสถานะ
+            }
+
+            const remainingQueueSpan = item.querySelector('.remaining-queue-text');
+            if (remainingQueueSpan && remainingQueue !== undefined) {
+              remainingQueueSpan.textContent = remainingQueue; // อัปเดตคิวที่เหลือ
+            }
+          }
+        });
+      }
+    });
+
+    renderMenu();
+  </script>
+</body>
+</html>

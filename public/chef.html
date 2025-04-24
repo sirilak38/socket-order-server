@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <title>พ่อครัว</title>
+</head>
+<body>
+  <h2>รายการออร์เดอร์</h2>
+  <ul id="order-list"></ul>
+
+  <script src="https://cdn.socket.io/4.3.2/socket.io.min.js"></script>
+  <script>
+    const socket = io('http://localhost:3000');
+
+    // เมื่อได้รับออร์เดอร์ใหม่
+    socket.on('new-order', (order) => {
+      const li = document.createElement('li');
+      li.id = `order-${order.id}`;
+
+      const itemsHtml = order.items && order.items.length > 0 
+        ? order.items.map(item => {
+            const name = item.name || 'ไม่ทราบชื่อเมนู';
+            const quantity = item.qty || 0;
+            const image = item.image || '';
+            return `🍽️ ${name} (${quantity})<br>
+                    <img src="${image}" alt="${name}" style="width: 80px; height: 80px; object-fit: cover; border-radius: 8px;">` ;
+          }).join('<br>') 
+        : 'ไม่มีรายการอาหาร';
+
+      li.innerHTML = `
+        <strong>โต๊ะ ${order.table}</strong><br>
+        <strong>เลขคิว: ${order.queueNumber}</strong><br>
+        เวลาสั่ง: ${order.orderTime}<br>
+        ${itemsHtml}<br>
+        <button onclick="updateStatus('${order.id}', 'accepted')">✅ รับออร์เดอร์</button>
+        <button onclick="updateStatus('${order.id}', 'done')">🍳 อาหารเสร็จแล้ว</button>
+        <button onclick="updateStatus('${order.id}', 'delivered')">🛵 ส่งแล้ว</button>
+        <p id="status-${order.id}">สถานะ: รอพ่อครัวรับออร์เดอร์</p>
+      `;
+      document.getElementById('order-list').appendChild(li);
+    });
+
+    // เมื่อมีการอัปเดตสถานะจาก server
+    socket.on('status-updated', ({ order }) => {
+      console.log(order); // 🔍 เพิ่ม log ตรวจสอบค่าที่ส่งมา
+      if (!order || !order.id) {
+          console.error('ไม่พบข้อมูลออร์เดอร์:', order);
+          return; // ถ้าไม่พบ order หรือ order.id ก็จะไม่ทำงานต่อ
+      }
+
+      const statusMap = {
+          waiting: 'รอพ่อครัวรับออร์เดอร์',
+          accepted: 'กำลังทำอาหาร',
+          done: 'พนักงานกำลังนำส่ง',
+          delivered: 'ได้รับอาหารแล้ว'
+      };
+
+      const statusEl = document.getElementById(`status-${order.id}`);
+      if (statusEl) {
+          statusEl.innerText = 'สถานะ: ' + statusMap[order.status];
+      }
+
+      // ถ้าสถานะเป็น 'delivered' ให้ลบรายการออร์เดอร์ออกจาก DOM
+      if (order.status === 'delivered') {
+          const orderEl = document.getElementById(`order-${order.id}`);
+          if (orderEl) {
+              orderEl.remove(); // ลบรายการออร์เดอร์
+          }
+      }
+    });
+
+    // ฟังก์ชันอัปเดตสถานะที่ส่งคำขอไปยัง backend
+    function updateStatus(id, status) {
+      fetch(`http://localhost:3000/order/${id}/status`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status })
+      })
+      .then(res => res.json())
+      .then(data => {
+        console.log('สถานะอัปเดต:', data);
+      })
+      .catch(err => {
+        alert('เกิดข้อผิดพลาดในการอัปเดตสถานะ');
+        console.error(err);
+      });
+    }
+  </script>
+</body>
+</html>
